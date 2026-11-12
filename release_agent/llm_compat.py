@@ -120,7 +120,7 @@ def from_openai_response(data: dict, requested_model: str) -> SimpleNamespace:
 
 class OpenAICompatLLM:
     def __init__(self, base_url: str, api_key: str | None, *, session: Any = None,
-                 max_retries: int = 6, timeout: float = 600.0, sleep=time.sleep):
+                 max_retries: int = 6, timeout: float = 180.0, sleep=time.sleep):
         self.url = base_url.rstrip("/") + "/chat/completions"
         self.session = session or requests.Session()
         self.headers = {"Content-Type": "application/json"}
@@ -148,6 +148,8 @@ class OpenAICompatLLM:
                 last = f"HTTP {response.status_code}: {response.text[:500]}"
                 if response.status_code not in RETRY_STATUS:
                     raise LLMError(last)
+                if response.status_code == 429 and "per day" in response.text.lower():
+                    raise LLMError("daily quota exhausted - " + last)  # waiting will not help
                 retry_after = response.headers.get("Retry-After", "")
                 if retry_after.replace(".", "", 1).isdigit():
                     self._sleep(min(float(retry_after) + 1, 90))

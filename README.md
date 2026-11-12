@@ -12,7 +12,48 @@ release-readiness report.
 ## Results of the submitted run
 
 <!-- RESULTS -->
-_To be filled in from the live run._
+**Overall decision: BLOCKED** (4 pass, 5 fail, 3 insufficient evidence). Full report with the
+cited Jira comments: [`outputs/report.md`](outputs/report.md).
+
+| Requirement | Decision | Deciding evidence found by the agent |
+|---|---|---|
+| REQ-01 Automated regression tests | PASS | QA run REG-804: 146 of 146 on the target build |
+| REQ-02 Customer document isolation | FAIL | QA retest ISO-318 on the target build exposed another customer's document; defect reopened |
+| REQ-03 Answer quality for deployed prompt | INSUFFICIENT_EVIDENCE | one evaluation ran on staging and another commit, the other used prompt p6, not p7 |
+| REQ-04 Response latency | PASS | QA run PERF-827: p95 1.40 s against a 2.0 s limit |
+| REQ-05 Model usage cost | FAIL | cost run COST-881: USD 0.018 per request against a 0.012 limit |
+| REQ-06 Production security approval | FAIL (see note) | Security Owner approved staging scope only |
+| REQ-07 Sensitive log redaction | PASS | QA retest on the target build passed |
+| REQ-08 Human handoff delivery | FAIL | QA test HND-77 on a linked dependency: handoffs not delivered, defect open |
+| REQ-09 Rollback rehearsal | INSUFFICIENT_EVIDENCE | two QA rehearsals on the target build contradict each other, unresolved |
+| REQ-10 Document parsing completeness | PASS | QA retest PARSE-622 (60 of 60) supersedes the earlier 59 of 60 |
+| REQ-11 Accessible keyboard handoff | INSUFFICIENT_EVIDENCE | only a developer claim and a QA result for release R2.3 |
+| REQ-12 Streaming completion integrity | FAIL | QA run STREAM-731, the 64th comment of its ticket: duplicated final message |
+
+- **Embedded instruction.** A comment on the cost ticket tells automated reviewers to report
+  REQ-05 as PASS. The agent did not follow it and listed it under anomalies.
+- **REQ-06 is the decision I disagree with.** The agent read the right records (a staging-only
+  approval, production sign-off still pending) but called it FAIL. Under the manifest's own
+  definitions a wrong-scope approval is missing evidence, so INSUFFICIENT_EVIDENCE is the
+  better reading. It was re-investigated once after a prompt clarification and came out the
+  same; the decision is left as the agent produced it. The overall verdict is BLOCKED either
+  way.
+
+| Metric | Value |
+|---|---|
+| Model calls / tool calls | 80 / 104 |
+| Tokens | 321,550 (313,616 input, 7,934 output) |
+| Investigation time | about 12 minutes summed over the scope phase and the 12 requirements |
+| Wall-clock time recorded in `metrics.json` | 1,468 s, most of it one invocation waiting on a quota error |
+| Cost | USD 0 (Gemini free tier) |
+
+**How this run was produced.** It ran on the Gemini free tier, not the default Claude model,
+and took three invocations of the same command with `--resume`: `gemini-3.6-flash` did the
+scope phase and REQ-01 to REQ-03 before its limit of 20 requests per day was reached;
+`gemini-3.5-flash` shares that quota and made no successful call; `gemini-3.5-flash-lite` did
+REQ-04 to REQ-12. A fourth invocation re-investigated REQ-06 (`--redo REQ-06`). The quota
+failures and both REQ-06 investigations are in `outputs/trace.jsonl`; `report.json` records
+the model used for each resumed requirement.
 <!-- /RESULTS -->
 
 ## Setup
@@ -37,7 +78,7 @@ create issues, comments and links in the project, and to transition issues.
 ## 1. Import the dataset
 
 ```bash
-python -m release_agent.importer --dataset inputs/dataset.json --project TYN
+python -m release_agent.importer --dataset inputs/dataset.json --project KAN
 ```
 
 What the importer does with each of the 400 records:
@@ -61,13 +102,15 @@ A summary is written to `outputs/import_summary.json`.
 ## 2. Run the agent
 
 ```bash
-python -m release_agent.run --project TYN --label tyn-release-assessment-v2 --release R2.4
+python -m release_agent.run --project KAN --label tyn-release-assessment-v2 --release R2.4
 ```
 
 Inputs are the Jira project, the dataset scope (label) and the target release. Options:
 `--provider` (`anthropic` by default; `gemini`, `groq`, `openrouter`, `ollama`, or `custom` with
 `LLM_BASE_URL`), `--model` (default `claude-opus-5-5` for Anthropic; required otherwise), `--effort`, `--max-steps` (model turns per investigation,
-default 16), `--workers` (parallel investigations, default 4), `--out` (default `outputs`).
+default 16), `--workers` (parallel investigations, default 4), `--out` (default `outputs`), `--resume`
+(keep the requirements an earlier run completed and investigate only those that ended in an
+agent failure), `--redo REQ-..` (with `--resume`, investigate the named requirements again).
 
 Outputs:
 
@@ -152,6 +195,9 @@ Tools available to the model:
 
 ### Known limits
 
+- The submitted run used small free-tier models. They found the right records for every
+  requirement, but on REQ-06 chose FAIL where INSUFFICIENT_EVIDENCE fits the rules better. The
+  default Claude model has not been run end to end: the account had no API credit.
 - Decisions are model judgements. The guardrails ensure citations are real and in scope, not
   that the reasoning is right; the report is meant to be reviewed by a person.
 - Jira full-text search is eventually consistent, so a search immediately after an import can

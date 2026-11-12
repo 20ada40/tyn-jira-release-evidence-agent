@@ -25,8 +25,12 @@ from .config import (DEFAULT_MODEL, ConfigError, agent_model, agent_provider, de
 from .jira_client import JiraClient, JiraError
 from .llm_compat import PROVIDERS, LLMError, build_compat_llm
 from .report import render_markdown, render_trace_markdown
-from .tools import JiraToolbox, ToolError
+from .tools import JiraToolbox, ToolError, Visited
 from .trace import Tracer, Usage
+
+
+class _Resumed(Exception):
+    """Control flow: the scope phase was restored from an earlier run."""
 
 
 def _title(summary: str | None) -> str:
@@ -60,7 +64,14 @@ def run(args: argparse.Namespace) -> int:
     settings = load_jira_settings()
     jira = JiraClient(settings.base_url, settings.email, settings.api_token)
     toolbox = JiraToolbox(jira, args.project, args.label, settings.base_url)
-    tracer = Tracer(out_dir / "trace.jsonl")
+    previous = None
+    if args.resume and (out_dir / "report.json").exists():
+        previous = json.loads((out_dir / "report.json").read_text(encoding="utf-8"))
+        if not previous.get("scope", {}).get("manifest_key") or any(
+                previous["scope"].get(k) != v for k, v in
+                (("project", args.project), ("dataset_label", args.label), ("release", args.release))):
+            previous = None  # nothing usable to resume from: run from the start
+    tracer = Tracer(out_dir / "trace.jsonl", append=previous is not None)
     if args.provider == "anthropic":
         llm: Any = anthropic.Anthropic(max_retries=4, timeout=600.0)
     else:
@@ -76,6 +87,9 @@ def run(args: argparse.Namespace) -> int:
     scope: dict[str, Any] = {"project": args.project, "dataset_label": args.label,
                              "release": args.release}
     timings: dict[str, float] = {}
+    kept: list[dict] = []
+    models_used = [args.model]
+    earlier_seconds = 0.0
 
     # ---- phase 1: the agent finds the manifest and the requirement set ----
     print(f"[scope] locating the release manifest for {args.release} ...", flush=True)
@@ -83,6 +97,40 @@ def run(args: argparse.Namespace) -> int:
     manifest = None
     requirement_views: list[dict] = []
     try:
+        if previous is not None:
+            # Resume: keep the scope and every requirement the earlier run completed, and
+            # re-investigate only those that ended in an agent failure.
+            scope = previous["scope"]
+            prior = previous["run"]
+            usage.merge(Usage.from_dict(prior["usage"]))
+            timings.update(prior.get("phase_seconds", {}))
+            earlier_seconds = float(prior.get("duration_seconds", 0))
+            models_used = [m for m in prior.get("models_requested", [prior["model_requested"]])
+                           if m != args.model] + [args.model]
+            redo = {r.strip().upper() for r in args.redo}
+            kept = [r for r in previous["requirements"]
+                    if not r.get("agent_error") and r["requirement_id"].upper() not in redo]
+            visited = Visited()
+            manifest = toolbox.get_issue(scope["manifest_key"], visited)
+            texts, start = [], 0
+            while True:
+                page = toolbox.get_comments({"issue_key": scope["manifest_key"], "start_at": start,
+                                             "max_results": 40}, visited)
+                texts += [c["text"] for c in page["comments"]]
+                start += len(page["comments"])
+                if not page.get("has_more") or not page["comments"]:
+                    break
+            if texts:
+                manifest = {**manifest, "description": manifest["description"]
+                            + "\n\nManifest comments:\n" + "\n".join(texts)}
+            done = {r["jira_key"] for r in kept}
+            for r in previous["requirements"]:
+                if r["jira_key"] not in done:
+                    requirement_views.append(toolbox.get_issue(r["jira_key"], visited))
+            tracer.event("scope", "orchestrator",
+                         message=f"resumed with model {args.model}: kept {len(kept)} completed "
+                                 f"requirements, re-investigating {len(requirement_views)}")
+            raise _Resumed()
         found = agent.find_scope(args.release)
         usage.merge(found.usage)
         manifest_key = found.payload["manifest_key"].strip().upper()
@@ -113,15 +161,19 @@ def run(args: argparse.Namespace) -> int:
                 failures.append({"scope": key, "reason": f"requirement record unusable: {exc}"})
         tracer.event("scope", "orchestrator",
                      message=f"manifest {manifest_key}; {len(requirement_views)} requirements to assess")
+    except _Resumed:
+        pass
     except AgentFailure as exc:
         usage.merge(getattr(exc, "usage", Usage()))
         failures.append({"scope": "scope", "reason": str(exc)})
-    timings["scope"] = round(time.time() - t0, 1)
+    if previous is None:
+        timings["scope"] = round(time.time() - t0, 1)
 
     # ---- phase 2: one bounded investigation per requirement ---------------
     def assess(view: dict) -> dict:
         t = time.time()
         entry: dict[str, Any] = {
+            "model_requested": args.model,
             "requirement_id": view.get("source_id") or view["key"], "jira_key": view["key"],
             "title": _title(view.get("summary")), "url": toolbox.browse_url(view["key"]),
         }
@@ -161,7 +213,6 @@ def run(args: argparse.Namespace) -> int:
         print(f"[assess] {len(requirement_views)} requirements, {args.workers} in parallel ...", flush=True)
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
             requirements = list(pool.map(assess, requirement_views))
-        requirements.sort(key=lambda r: r["requirement_id"])
         for r in requirements:
             u = r.pop("_usage")
             usage.merge(u)
@@ -171,9 +222,10 @@ def run(args: argparse.Namespace) -> int:
                 failures.append({"scope": r["requirement_id"], "reason": r["agent_error"]})
 
     # ---- deterministic overall verdict + outputs --------------------------
+    requirements = sorted(kept + requirements, key=lambda r: r["requirement_id"])
     decisions = [r["decision"] for r in requirements]
     overall = overall_decision(decisions)
-    duration = round(time.time() - started, 1)
+    duration = round(earlier_seconds + time.time() - started, 1)
     report = {
         "overall_decision": overall,
         "overall_explanation": _explain(overall, requirements, failures),
@@ -183,7 +235,8 @@ def run(args: argparse.Namespace) -> int:
         "failures": failures,
         "run": {
             "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-            "provider": args.provider, "model_requested": args.model, "effort": args.effort,
+            "provider": args.provider, "model_requested": args.model,
+            "models_requested": models_used, "effort": args.effort,
             "max_steps_per_investigation": args.max_steps, "parallel_investigations": args.workers,
             "duration_seconds": duration, "phase_seconds": timings,
             "jira_api_calls": jira.api_calls, "usage": usage.as_dict(),
@@ -220,6 +273,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--effort", default="high", choices=["low", "medium", "high", "xhigh", "max"])
     parser.add_argument("--max-steps", type=int, default=16, help="Model turns allowed per investigation")
     parser.add_argument("--workers", type=int, default=4, help="Requirements investigated in parallel")
+    parser.add_argument("--resume", action="store_true",
+                        help="Continue from the report in --out: keep completed requirements and "
+                             "re-investigate only those that ended in an agent failure")
+    parser.add_argument("--redo", nargs="*", default=[], metavar="REQ",
+                        help="With --resume: requirement ids to investigate again even though "
+                             "the earlier run completed them")
     parser.add_argument("--no-fallbacks", action="store_true",
                         help="Disable the server-side refusal fallback (beta) on model calls")
     args = parser.parse_args(argv)

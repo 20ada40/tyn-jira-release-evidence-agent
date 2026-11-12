@@ -20,14 +20,18 @@ PRICES = {
 
 
 class Tracer:
-    def __init__(self, path: str | Path | None):
+    def __init__(self, path: str | Path | None, append: bool = False):
         self._lock = threading.Lock()
         self._seq = 0
         self.events: list[dict] = []
         self._fh = None
         if path:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-            self._fh = open(path, "w", encoding="utf-8")
+            if append and Path(path).exists():  # resumed run: keep the earlier events
+                with open(path, encoding="utf-8") as fh:
+                    self.events = [json.loads(line) for line in fh if line.strip()]
+                self._seq = max((e["seq"] for e in self.events), default=0)
+            self._fh = open(path, "a" if append else "w", encoding="utf-8")
 
     def event(self, scope: str, kind: str, **data: Any) -> None:
         with self._lock:
@@ -55,6 +59,16 @@ class Usage:
         self.tool_calls = 0
         self.tokens = {f: 0 for f in self.FIELDS}
         self.by_model: dict[str, dict[str, int]] = {}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Usage":
+        usage = cls()
+        usage.model_calls = int(data.get("model_calls", 0))
+        usage.tool_calls = int(data.get("tool_calls", 0))
+        usage.tokens = {f: int(data.get(f, 0)) for f in cls.FIELDS}
+        usage.by_model = {m: {f: int(c.get(f, 0)) for f in cls.FIELDS}
+                          for m, c in (data.get("by_model") or {}).items()}
+        return usage
 
     def add_response(self, response: Any) -> dict:
         usage = getattr(response, "usage", None)

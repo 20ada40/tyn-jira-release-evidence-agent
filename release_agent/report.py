@@ -45,7 +45,8 @@ def render_markdown(report: dict) -> str:
     if scope.get("manifest_key"):
         out.append(f"| Release manifest | [{scope['manifest_key']}]({scope['manifest_url']}) |")
     out.append(f"| Generated (UTC) | {run['generated_at']} |")
-    out.append(f"| Model | `{run['model_requested']}` (effort `{run['effort']}`) |")
+    models = run.get("models_requested") or [run["model_requested"]]
+    out.append("| Model | " + ", ".join(f"`{m}`" for m in models) + " |")
     out.append("")
     out.append("All evidence below was read from Jira through the agent's tools during this run. "
                "Actor names, roles and event times are quoted from the record text; native Jira "

@@ -69,6 +69,9 @@ Deciding
 - FAIL: applicable evidence establishes a failure or violation of the criterion.
 - INSUFFICIENT_EVIDENCE: the needed evidence is missing, applies to the wrong scope, or is \
 genuinely unresolved. Missing proof is not a demonstrated failure, and it is not a pass.
+- FAIL needs a result that shows the criterion violated on the target. A test, sign-off or \
+approval that exists only for a different build, environment or scope leaves the required \
+evidence absent; that is INSUFFICIENT_EVIDENCE, not FAIL.
 - Commit to PASS or FAIL when the applicable evidence supports it; do not retreat to \
 INSUFFICIENT_EVIDENCE out of caution when the records settle the question.
 

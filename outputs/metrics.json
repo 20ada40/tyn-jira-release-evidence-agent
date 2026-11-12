@@ -1,0 +1,54 @@
+{
+  "generated_at": "2026-11-12 13:12:06",
+  "provider": "gemini",
+  "model_requested": "gemini-3.5-flash-lite",
+  "models_requested": [
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite"
+  ],
+  "effort": "high",
+  "max_steps_per_investigation": 16,
+  "parallel_investigations": 1,
+  "duration_seconds": 1467.8,
+  "phase_seconds": {
+    "scope": 21.8,
+    "REQ-01": 43.5,
+    "REQ-02": 204.9,
+    "REQ-03": 188.1,
+    "REQ-04": 13.7,
+    "REQ-05": 17.5,
+    "REQ-06": 14.1,
+    "REQ-07": 11.1,
+    "REQ-08": 63.6,
+    "REQ-09": 89.5,
+    "REQ-10": 32.5,
+    "REQ-11": 15.1,
+    "REQ-12": 18.1
+  },
+  "jira_api_calls": 9,
+  "usage": {
+    "model_calls": 80,
+    "tool_calls": 104,
+    "input_tokens": 313616,
+    "output_tokens": 7934,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "total_tokens": 321550,
+    "by_model": {
+      "gemini-3.6-flash": {
+        "input_tokens": 90328,
+        "output_tokens": 2685,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0
+      },
+      "gemini-3.5-flash-lite": {
+        "input_tokens": 223288,
+        "output_tokens": 5249,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0
+      }
+    },
+    "estimated_cost_usd": null
+  }
+}
