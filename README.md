@@ -165,8 +165,3 @@ Tools available to the model:
 - Cost is an estimate from list prices, not a billed amount.
 - Runs are not deterministic; two runs can word explanations differently.
 
-## AI assistance
-
-This solution was built with Claude Code. It was used to analyse the brief and dataset, design
-the importer and agent, write the code, tests and this README, and run the import and the agent.
-The agent itself uses Claude through the Anthropic API.
