@@ -19,6 +19,7 @@ from typing import Any, Callable
 
 import anthropic
 
+from .llm_compat import LLMError
 from .tools import EVIDENCE_TOOLS, JiraToolbox, ToolError, Visited
 from .trace import Tracer, Usage
 
@@ -207,6 +208,8 @@ class ReleaseAgent:
                 raise self._fail(scope, usage, f"model connection error: {exc}")
             except anthropic.APIStatusError as exc:
                 raise self._fail(scope, usage, f"model API error {exc.status_code}: {exc.message}")
+            except LLMError as exc:
+                raise self._fail(scope, usage, f"model error: {exc}")
             counts = usage.add_response(response)
             self.tracer.event(scope, "model", step=step, model=getattr(response, "model", None),
                               stop_reason=response.stop_reason, usage=counts,

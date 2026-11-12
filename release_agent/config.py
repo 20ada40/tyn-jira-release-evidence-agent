@@ -43,6 +43,12 @@ def default_project() -> str | None:
     return os.environ.get("JIRA_PROJECT_KEY") or None
 
 
-def agent_model() -> str:
+def agent_provider() -> str:
     load_dotenv()
-    return os.environ.get("AGENT_MODEL") or DEFAULT_MODEL
+    return (os.environ.get("LLM_PROVIDER") or "anthropic").strip().lower()
+
+
+def agent_model() -> str | None:
+    """AGENT_MODEL if set; the Claude default applies only to the anthropic provider."""
+    load_dotenv()
+    return os.environ.get("AGENT_MODEL") or None

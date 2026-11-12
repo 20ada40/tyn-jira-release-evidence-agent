@@ -20,8 +20,10 @@ from typing import Any
 import anthropic
 
 from .agent import AgentFailure, ReleaseAgent, overall_decision
-from .config import ConfigError, agent_model, default_project, load_jira_settings
+from .config import (DEFAULT_MODEL, ConfigError, agent_model, agent_provider, default_project,
+                     load_jira_settings)
 from .jira_client import JiraClient, JiraError
+from .llm_compat import PROVIDERS, LLMError, build_compat_llm
 from .report import render_markdown, render_trace_markdown
 from .tools import JiraToolbox, ToolError
 from .trace import Tracer, Usage
@@ -59,9 +61,13 @@ def run(args: argparse.Namespace) -> int:
     jira = JiraClient(settings.base_url, settings.email, settings.api_token)
     toolbox = JiraToolbox(jira, args.project, args.label, settings.base_url)
     tracer = Tracer(out_dir / "trace.jsonl")
-    llm = anthropic.Anthropic(max_retries=4, timeout=600.0)
+    if args.provider == "anthropic":
+        llm: Any = anthropic.Anthropic(max_retries=4, timeout=600.0)
+    else:
+        llm = build_compat_llm(args.provider)
     agent = ReleaseAgent(llm, toolbox, tracer, model=args.model, effort=args.effort,
-                         max_steps=args.max_steps, use_fallbacks=not args.no_fallbacks)
+                         max_steps=args.max_steps,
+                         use_fallbacks=args.provider == "anthropic" and not args.no_fallbacks)
 
     started = time.time()
     usage = Usage()
@@ -177,7 +183,7 @@ def run(args: argparse.Namespace) -> int:
         "failures": failures,
         "run": {
             "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-            "model_requested": args.model, "effort": args.effort,
+            "provider": args.provider, "model_requested": args.model, "effort": args.effort,
             "max_steps_per_investigation": args.max_steps, "parallel_investigations": args.workers,
             "duration_seconds": duration, "phase_seconds": timings,
             "jira_api_calls": jira.api_calls, "usage": usage.as_dict(),
@@ -205,7 +211,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--label", required=True, help="Dataset scope: Jira label on every imported issue")
     parser.add_argument("--release", required=True, help="Target release, e.g. R2.4")
     parser.add_argument("--out", default="outputs")
-    parser.add_argument("--model", default=agent_model())
+    parser.add_argument("--provider", default=agent_provider(),
+                        choices=["anthropic", *PROVIDERS, "custom"],
+                        help="Model provider (default: LLM_PROVIDER or anthropic). All but anthropic "
+                             "use an OpenAI-compatible chat-completions endpoint.")
+    parser.add_argument("--model", default=agent_model(),
+                        help=f"Model id (default: AGENT_MODEL; {DEFAULT_MODEL} for anthropic)")
     parser.add_argument("--effort", default="high", choices=["low", "medium", "high", "xhigh", "max"])
     parser.add_argument("--max-steps", type=int, default=16, help="Model turns allowed per investigation")
     parser.add_argument("--workers", type=int, default=4, help="Requirements investigated in parallel")
@@ -214,9 +225,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.project:
         parser.error("--project is required (or set JIRA_PROJECT_KEY)")
+    if not args.model:
+        if args.provider != "anthropic":
+            parser.error(f"--model is required for provider {args.provider} (or set AGENT_MODEL)")
+        args.model = DEFAULT_MODEL
     try:
         return run(args)
-    except (ConfigError, JiraError, anthropic.AnthropicError) as exc:
+    except (ConfigError, JiraError, LLMError, anthropic.AnthropicError) as exc:
         print(f"RUN FAILED: {exc}", file=sys.stderr)
         return 1
 

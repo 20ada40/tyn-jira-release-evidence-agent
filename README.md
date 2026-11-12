@@ -17,7 +17,9 @@ _To be filled in from the live run._
 
 ## Setup
 
-Requires Python 3.11+, a Jira Cloud site with an empty project, and an Anthropic API key.
+Requires Python 3.11+, a Jira Cloud site with an empty project, and an API key for a model
+provider (Anthropic, or any OpenAI-compatible endpoint such as Gemini, Groq, OpenRouter or a
+local Ollama).
 
 ```bash
 python -m venv .venv
@@ -27,7 +29,8 @@ copy .env.example .env            # then fill in the values
 ```
 
 `.env` (git-ignored) holds `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY`
-and `ANTHROPIC_API_KEY`. The Jira API token is created at
+and the model provider's key (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY` or
+`OPENROUTER_API_KEY`). The Jira API token is created at
 <https://id.atlassian.com/manage-profile/security/api-tokens>. The Jira user needs permission to
 create issues, comments and links in the project, and to transition issues.
 
@@ -62,7 +65,8 @@ python -m release_agent.run --project TYN --label tyn-release-assessment-v2 --re
 ```
 
 Inputs are the Jira project, the dataset scope (label) and the target release. Options:
-`--model` (default `claude-opus-5-5`), `--effort`, `--max-steps` (model turns per investigation,
+`--provider` (`anthropic` by default; `gemini`, `groq`, `openrouter`, `ollama`, or `custom` with
+`LLM_BASE_URL`), `--model` (default `claude-opus-5-5` for Anthropic; required otherwise), `--effort`, `--max-steps` (model turns per investigation,
 default 16), `--workers` (parallel investigations, default 4), `--out` (default `outputs`).
 
 Outputs:
@@ -142,6 +146,9 @@ Tools available to the model:
 - **Manual tool loop** on the Anthropic Messages API rather than a framework, so every call is
   traced and bounded in about 150 lines. Adaptive thinking with summarised reasoning is on, and
   prompt caching is enabled for the repeated system prompt and tools.
+- **Model is swappable.** `release_agent/llm_compat.py` adapts any OpenAI-compatible
+  chat-completions endpoint to the same interface, so the loop, tools, validation and trace are
+  identical whichever model runs. Thinking, effort and caching settings apply to Anthropic only.
 
 ### Known limits
 
